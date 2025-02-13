@@ -14,9 +14,11 @@ An Ollama API wrapper for Poe.com AI. This project allows you to use Poe's power
   - Simple `/chat` endpoint for direct Poe API access
   - `/models` endpoint for complete model information
 - **Advanced Features**
+  - Configurable model settings via JSON
   - Rate limiting to prevent API overuse
   - Detailed logging for debugging
   - Environment variable configuration
+  - Model testing framework
 
 ## Installation
 
@@ -34,12 +36,48 @@ pip install -e .
 
 ## Configuration
 
-1. Create a `.env` file in your project directory:
+### Environment Variables
+
+Create a `.env` file in your project directory:
 ```env
 POE_API_KEY=your_poe_api_key_here
 ```
 
-2. (Optional) Configure logging level in `main.py`:
+### Model Configuration
+
+Models are configured in `models.json`. This file defines which Poe bots are available and their settings:
+
+```json
+{
+    "subscription_cost": {
+        "monthly_fee": 16.67,
+        "tokens_per_month": 1000000
+    },
+    "models": [
+        {
+            "name": "Claude-3.5-Sonnet",      // Name used in API requests
+            "bot_name": "Claude-3.5-Sonnet",  // Actual Poe bot name
+            "token_cost": 326,                // Cost in tokens per request
+            "dollar_cost": 0.00544,           // Cost in dollars per 1k tokens
+            "context_window": "200k",         // Context window size
+            "tags": ["latest"],               // Model tags for /api/tags endpoint
+            "available": true,                // Whether the model is currently available
+            "description": "Anthropic's Claude 3.5 Sonnet model"
+        }
+        // Add more models as needed
+    ]
+}
+```
+
+To add or modify models:
+1. Find the bot name in your Poe interface
+2. Add an entry to the `models` array
+3. Set `available: true` to enable the model
+4. Restart the server to apply changes
+
+### Logging Configuration
+
+Configure logging level in `main.py`:
 ```python
 setup_logging(debug_level=DebugLevel.VERBOSE)  # or DebugLevel.MINIMAL
 ```
@@ -69,7 +107,7 @@ import requests
 
 # Generate text
 response = requests.post("http://localhost:8000/api/generate", json={
-    "model": "Claude-3.5-Haiku",
+    "model": "Claude-3.5-Sonnet",  # Use name from models.json
     "prompt": "Hello, how are you?",
     "stream": False
 })
@@ -88,7 +126,7 @@ openai.api_base = "http://localhost:8000/v1"
 openai.api_key = "dummy"  # any string will work
 
 response = openai.ChatCompletion.create(
-    model="Claude-3.5-Haiku",  # or any other supported model
+    model="Claude-3.5-Sonnet",  # Use name from models.json
     messages=[
         {"role": "user", "content": "Hello, how are you?"}
     ],
@@ -104,27 +142,34 @@ For simple interactions:
 import requests
 
 response = requests.post("http://localhost:8000/chat", params={
-    "model": "Claude-3.5-Haiku",
+    "model": "Claude-3.5-Sonnet",  # Use name from models.json
     "message": "Hello, how are you?"
 })
 ```
 
-## Available Models
+## Model Testing
 
-- GPT-3.5-Turbo
-- GPT-4o-Mini
-- GPT-4o
-- Claude-3.5-Sonnet
-- Claude-3.5-Haiku
-- Gemini-2.0-Flash-Lite
+The package includes a testing framework to verify model availability and functionality:
+
+```bash
+# Run model tests
+python -m poellama.tests.test_models
+```
+
+The test framework:
+- Validates model configuration
+- Tests model availability
+- Respects API rate limits
+- Provides detailed test results
 
 ## Development
 
 ### Running Tests
 
 ```bash
-python test_server.py  # Test basic functionality
-python test_ollama.py  # Test Ollama compatibility
+python -m poellama.tests.test_models  # Test model functionality
+python test_server.py                 # Test basic functionality
+python test_ollama.py                 # Test Ollama compatibility
 ```
 
 ### Contributing
