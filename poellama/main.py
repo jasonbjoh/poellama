@@ -11,6 +11,30 @@ import time
 from datetime import datetime, timezone
 from fastapi.requests import Request
 from fastapi.responses import StreamingResponse
+from pathlib import Path
+
+# Load models configuration
+MODELS_FILE = Path(__file__).parent / "models.json"
+with open(MODELS_FILE, 'r') as f:
+    MODELS_CONFIG = json.load(f)
+
+# Create a lookup dictionary for quick model validation
+MODEL_LOOKUP = {model["name"]: model for model in MODELS_CONFIG["models"]}
+
+def validate_model(model_name: str) -> Dict:
+    """Validate model name and return model config if valid."""
+    if model_name not in MODEL_LOOKUP:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model '{model_name}' not found. Available models: {', '.join(MODEL_LOOKUP.keys())}"
+        )
+    model = MODEL_LOOKUP[model_name]
+    if not model["available"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model '{model_name}' is currently unavailable: {model.get('description', '')}"
+        )
+    return model
 
 # Model classes for Ollama API compatibility
 class OllamaGenerateRequest(BaseModel):
@@ -250,6 +274,10 @@ async def generate(request: OllamaGenerateRequest) -> OllamaResponse:
     try:
         logging.info(f"Processing Ollama-compatible generate request for model: {request.model}")
         
+        # Validate model and get bot name
+        model_config = validate_model(request.model)
+        model_name = model_config["bot_name"]
+        
         # Create messages
         messages = poe_client.create_messages(
             prompt=request.prompt,
@@ -262,7 +290,7 @@ async def generate(request: OllamaGenerateRequest) -> OllamaResponse:
         # Get response
         full_response = await poe_client.get_response(
             messages=messages,
-            model=request.model
+            model=model_name  # Use bot_name from config
         )
         
         end_time = time.time_ns()
@@ -300,12 +328,14 @@ async def get_models():
         logging.info("Fetching available models")
         return {
             "models": [
-                {"name": "GPT-3.5-Turbo", "cost": "0.002 per 1k tokens", "contextWindow": "4k tokens"},
-                {"name": "GPT-4o-Mini", "cost": "0.03 per 1k tokens", "contextWindow": "8k tokens"},
-                {"name": "GPT-4o", "cost": "0.278 per 1k tokens", "contextWindow": "8k tokens"},
-                {"name": "Claude-3.5-Sonnet", "cost": "0.326 per 1k tokens", "contextWindow": "200k tokens"},
-                {"name": "Claude-3.5-Haiku", "cost": "0.01 per 1k tokens", "contextWindow": "200k tokens"},
-                {"name": "Gemini-2.0-Flash-Lite", "cost": "0.002 per 1k tokens", "contextWindow": "32k tokens"}
+                {
+                    "name": model["name"],
+                    "cost": f"${model['dollar_cost']:.5f} per 1k tokens ({model['token_cost']} tokens)",
+                    "contextWindow": model["context_window"],
+                    "description": model["description"],
+                    "available": model["available"]
+                }
+                for model in MODELS_CONFIG["models"]
             ]
         }
     except Exception as e:
@@ -316,22 +346,40 @@ async def get_models():
 async def chat(model: str = Config.DEFAULT_MODEL, message: Optional[str] = None):
     if not message:
         raise HTTPException(status_code=400, detail="Message is required")
-        
+    
     try:
-        logging.info(f"Processing chat request for model: {model}")
+        # Validate model
+        model_config = validate_model(model)
+        model_name = model_config["bot_name"]
+        
+        logging.info(f"Processing chat request for model: {model_name}")
         logging.debug(f"Message content: {message[:100]}...")
         
         messages = poe_client.create_messages(prompt=message)
-        full_response = await poe_client.get_response(
-            messages=messages,
-            model=model
-        )
+        try:
+            full_response = await poe_client.get_response(
+                messages=messages,
+                model=model_name
+            )
+        except fp.client.BotError as e:
+            error_data = json.loads(str(e))
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "Bot error",
+                    "model": model_name,
+                    "message": error_data.get("text", str(e)),
+                    "allow_retry": error_data.get("allow_retry", False)
+                }
+            )
         
         logging.info("Successfully processed chat request")
         logging.debug(f"Response: {full_response[:100]}...")
         
         return {"response": full_response}
         
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Error in chat endpoint: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -344,17 +392,10 @@ async def get_tags():
         return {
             "models": [
                 {
-                    "name": "GPT-4o-Mini",
-                    "tags": ["latest"]
-                },
-                {
-                    "name": "Claude-3.5-Haiku",
-                    "tags": ["latest"]
-                },
-                {
-                    "name": "Gemini-2.0-Flash-Lite",
-                    "tags": ["latest"]
+                    "name": model["name"],
+                    "tags": model["tags"]
                 }
+                for model in MODELS_CONFIG["models"]
             ]
         }
     except Exception as e:
@@ -368,15 +409,21 @@ async def chat_completions(raw_request: Request):
         # Parse and validate request
         body = await raw_request.body()
         body_str = body.decode()
-        logging.info(f"Raw request body: {body_str}")
+        logging.debug(f"Raw request body: {body_str}")  # Use debug level for sensitive data
         
         try:
             json_data = json.loads(body_str)
             request = ChatCompletionRequest(**json_data)
         except json.JSONDecodeError as e:
+            logging.error(f"Invalid JSON in request: {str(e)}")
             raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
         except Exception as e:
+            logging.error(f"Request validation error: {str(e)}")
             raise HTTPException(status_code=422, detail=f"Validation error: {str(e)}")
+        
+        # Validate model and get bot name
+        model_config = validate_model(request.model)
+        model_name = model_config["bot_name"]
         
         # Create messages
         messages = poe_client.create_messages(message_list=request.messages)
@@ -451,7 +498,7 @@ async def chat_completions(raw_request: Request):
         # Non-streaming response
         full_response = await poe_client.get_response(
             messages=messages,
-            model=request.model
+            model=model_name  # Use bot_name from config
         )
         
         # Calculate token counts
