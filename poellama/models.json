@@ -13,7 +13,28 @@
             "tags": ["latest"],
             "available": false,
             "description": "Web search capability, currently in testing"
+            
         },
+        {
+            "name": "Claude-3.7-Sonnet",
+            "bot_name": "Claude-3.7-Sonnet",
+            "token_cost": 326,
+            "dollar_cost": 0.00544,
+            "context_window": "128k",
+            "tags": ["latest"],
+            "available": true,
+            "description": "Anthropic's Claude 3.7 Sonnet model"
+        }, 
+        {
+            "name": "Claude-3.7-Sonnet-Reasoning",
+            "bot_name": "Claude-3.7-Sonnet-Reasoning",
+            "token_cost": 326,
+            "dollar_cost": 0.00544,
+            "context_window": "128k",
+            "tags": ["latest"],
+            "available": true,
+            "description": "Anthropic's Claude 3.7 Sonnet Reasoning model"
+        },        
         {
             "name": "Claude-3.5-Sonnet",
             "bot_name": "Claude-3.5-Sonnet",
